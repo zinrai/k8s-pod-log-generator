@@ -38,13 +38,18 @@ func calculateTotalPods(megabytesTotalLogSize, kilobytesPerPodLog int) int {
 }
 
 func createPod(clientset *kubernetes.Clientset, namespace, podName string, totalLogLines, bytesPerLine int) {
+	annotations := map[string]string{
+		"app": "k8s-pod-log-generator",
+	}
+
 	_, err := clientset.CoreV1().Pods(namespace).Create(context.TODO(), &v1.Pod{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Pod",
 			APIVersion: "v1",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name: podName,
+			Name:        podName,
+			Annotations: annotations,
 		},
 		Spec: v1.PodSpec{
 			RestartPolicy: v1.RestartPolicyNever,
