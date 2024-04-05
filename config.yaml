@@ -1,0 +1,4 @@
+num_k8s_namespaces: 10
+bytes_per_log_line: 40
+kilobytes_per_pod_log: 100
+megabytes_total_log_size: 10
