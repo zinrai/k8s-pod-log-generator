@@ -67,10 +67,11 @@ func createPod(clientset *kubernetes.Clientset, namespace, podName string, total
 }
 
 func createRandomPods(clientset *kubernetes.Clientset, namespaces []string, totalLogLines, bytesPerLine, totalPods int) {
-	rand.Seed(time.Now().UnixNano())
+	source := rand.NewSource(time.Now().UnixNano())
+	rnd := rand.New(source)
 
 	for i := 1; i <= totalPods; i++ {
-		randomNamespace := namespaces[rand.Intn(len(namespaces))]
+		randomNamespace := namespaces[rnd.Intn(len(namespaces))]
 		podName := fmt.Sprintf("logger-pod-%d", i)
 		podRemaining := totalPods - i
 		createPod(clientset, randomNamespace, podName, totalLogLines, bytesPerLine)
