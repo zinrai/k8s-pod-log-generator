@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v2"
@@ -24,6 +25,7 @@ type Config struct {
 	BytesPerLogLine       int    `yaml:"bytes_per_log_line"`
 	KilobytesPerPodLog    int    `yaml:"kilobytes_per_pod_log"`
 	MegabytesTotalLogSize int    `yaml:"megabytes_total_log_size"`
+	NumWorkers            int    `yaml:"num_workers"`
 }
 
 func calculateTotalLogLines(bytesPerLine int, kilobytesPerLog int) int {
@@ -68,19 +70,6 @@ func createPod(clientset *kubernetes.Clientset, namespace, podName string, total
 	}, metav1.CreateOptions{})
 	if err != nil {
 		log.Fatalf("Failed to create Pod %s in namespace %s: %v", podName, namespace, err)
-	}
-}
-
-func createRandomPods(clientset *kubernetes.Clientset, namespaces []string, totalLogLines, bytesPerLine, totalPods int) {
-	source := rand.NewSource(time.Now().UnixNano())
-	rnd := rand.New(source)
-
-	for i := 1; i <= totalPods; i++ {
-		randomNamespace := namespaces[rnd.Intn(len(namespaces))]
-		podName := fmt.Sprintf("logger-pod-%d", i)
-		podRemaining := totalPods - i
-		createPod(clientset, randomNamespace, podName, totalLogLines, bytesPerLine)
-		log.Printf("Pod: %s , Namespace: %s , Remaining: %d", podName, randomNamespace, podRemaining)
 	}
 }
 
@@ -140,5 +129,38 @@ func main() {
 
 	namespaces := createNamespaces(clientset, config.NumK8sNamespaces)
 
-	createRandomPods(clientset, namespaces, totalLogLines, config.BytesPerLogLine, totalPods)
+	jobQueue := make(chan Job, totalPods)
+	var wg sync.WaitGroup
+
+	for i := 0; i < config.NumWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobQueue {
+				createPod(clientset, job.Namespace, job.PodName, totalLogLines, config.BytesPerLogLine)
+				log.Printf("Pod %s in namespace %s created", job.PodName, job.Namespace)
+				log.Printf("Remaining jobs: %d", len(jobQueue))
+				time.Sleep(1 * time.Second)
+			}
+		}()
+	}
+
+	source := rand.NewSource(time.Now().UnixNano())
+	rnd := rand.New(source)
+	for i := 1; i <= totalPods; i++ {
+		randomNamespace := namespaces[rnd.Intn(len(namespaces))]
+		podName := fmt.Sprintf("logger-pod-%d", i)
+		jobQueue <- Job{
+			Namespace: randomNamespace,
+			PodName:   podName,
+		}
+	}
+	close(jobQueue)
+
+	wg.Wait()
+}
+
+type Job struct {
+	Namespace string
+	PodName   string
 }
