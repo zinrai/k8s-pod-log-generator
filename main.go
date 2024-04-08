@@ -78,7 +78,25 @@ func createNamespaces(clientset *kubernetes.Clientset, numK8sNamespaces int) []s
 
 	for i := 1; i <= numK8sNamespaces; i++ {
 		namespaceName := fmt.Sprintf("logger-ns%d", i)
-		_, err := clientset.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{
+
+		_, err := clientset.CoreV1().Namespaces().Get(context.TODO(), namespaceName, metav1.GetOptions{})
+		if err == nil {
+			err = clientset.CoreV1().Namespaces().Delete(context.TODO(), namespaceName, metav1.DeleteOptions{})
+			if err != nil {
+				log.Fatalf("Failed to delete existing namespace %s: %v", namespaceName, err)
+			}
+			log.Printf("Deleted existing namespace %s", namespaceName)
+
+			for {
+				_, err = clientset.CoreV1().Namespaces().Get(context.TODO(), namespaceName, metav1.GetOptions{})
+				if err != nil {
+					break
+				}
+				time.Sleep(1 * time.Second)
+			}
+		}
+
+		_, err = clientset.CoreV1().Namespaces().Create(context.TODO(), &v1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: namespaceName,
 			},
