@@ -26,6 +26,7 @@ type Config struct {
 	KilobytesPerPodLog    int    `yaml:"kilobytes_per_pod_log"`
 	MegabytesTotalLogSize int    `yaml:"megabytes_total_log_size"`
 	NumWorkers            int    `yaml:"num_workers"`
+	RunDurationMinutes    int    `yaml:"run_duration_minutes"`
 }
 
 func calculateTotalLogLines(bytesPerLine int, kilobytesPerLog int) int {
@@ -165,13 +166,16 @@ func main() {
 
 	source := rand.NewSource(time.Now().UnixNano())
 	rnd := rand.New(source)
-	for i := 1; i <= totalPods; i++ {
+	stopTime := time.Now().Add(time.Duration(config.RunDurationMinutes) * time.Minute)
+	podIndex := 1
+	for time.Now().Before(stopTime) {
 		randomNamespace := namespaces[rnd.Intn(len(namespaces))]
-		podName := fmt.Sprintf("logger-pod-%d", i)
+		podName := fmt.Sprintf("logger-pod-%d", podIndex)
 		jobQueue <- Job{
 			Namespace: randomNamespace,
 			PodName:   podName,
 		}
+		podIndex++
 	}
 	close(jobQueue)
 
