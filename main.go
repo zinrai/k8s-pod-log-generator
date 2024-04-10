@@ -8,7 +8,6 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"gopkg.in/yaml.v2"
@@ -25,8 +24,8 @@ type Config struct {
 	BytesPerLogLine       int    `yaml:"bytes_per_log_line"`
 	KilobytesPerPodLog    int    `yaml:"kilobytes_per_pod_log"`
 	MegabytesTotalLogSize int    `yaml:"megabytes_total_log_size"`
-	NumWorkers            int    `yaml:"num_workers"`
 	RunDurationMinutes    int    `yaml:"run_duration_minutes"`
+	NamespacePrefix       string `yaml:"namespace_prefix"`
 }
 
 func calculateTotalLogLines(bytesPerLine int, kilobytesPerLog int) int {
@@ -74,11 +73,11 @@ func createPod(clientset *kubernetes.Clientset, namespace, podName string, total
 	}
 }
 
-func createNamespaces(clientset *kubernetes.Clientset, numK8sNamespaces int) []string {
+func createNamespaces(clientset *kubernetes.Clientset, numK8sNamespaces int, namespacePrefix string) []string {
 	namespaces := make([]string, numK8sNamespaces)
 
 	for i := 1; i <= numK8sNamespaces; i++ {
-		namespaceName := fmt.Sprintf("logger-ns%d", i)
+		namespaceName := fmt.Sprintf("%s%d", namespacePrefix, i)
 
 		_, err := clientset.CoreV1().Namespaces().Get(context.TODO(), namespaceName, metav1.GetOptions{})
 		if err == nil {
@@ -112,6 +111,24 @@ func createNamespaces(clientset *kubernetes.Clientset, numK8sNamespaces int) []s
 	return namespaces
 }
 
+func getRunningPodCount(clientset *kubernetes.Clientset, namespace string) int {
+	pods, err := clientset.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{
+		FieldSelector: "status.phase!=Succeeded,status.phase!=Failed",
+	})
+	if err != nil {
+		log.Fatalf("Failed to list pods in namespace %s: %v", namespace, err)
+	}
+
+	runningPodCount := 0
+	for _, pod := range pods.Items {
+		if pod.Name != "" && pod.Namespace != "" {
+			runningPodCount++
+		}
+	}
+
+	return runningPodCount
+}
+
 func main() {
 	configFile := "config.yaml"
 
@@ -132,6 +149,10 @@ func main() {
 		config.KubeconfigPath = filepath.Join(homedir.HomeDir(), ".kube", "config")
 	}
 
+	if config.NamespacePrefix == "" {
+		config.NamespacePrefix = "logger-ns"
+	}
+
 	totalPods := calculateTotalPods(config.MegabytesTotalLogSize, config.KilobytesPerPodLog)
 
 	totalLogLines := calculateTotalLogLines(config.BytesPerLogLine, config.KilobytesPerPodLog)
@@ -146,43 +167,29 @@ func main() {
 		log.Fatalf("Error creating Kubernetes client: %v", err)
 	}
 
-	namespaces := createNamespaces(clientset, config.NumK8sNamespaces)
-
-	jobQueue := make(chan Job, totalPods)
-	var wg sync.WaitGroup
-
-	for i := 0; i < config.NumWorkers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for job := range jobQueue {
-				createPod(clientset, job.Namespace, job.PodName, totalLogLines, config.BytesPerLogLine)
-				log.Printf("Pod %s in namespace %s created", job.PodName, job.Namespace)
-				log.Printf("Remaining jobs: %d", len(jobQueue))
-				time.Sleep(1 * time.Second)
-			}
-		}()
-	}
+	namespaces := createNamespaces(clientset, config.NumK8sNamespaces, config.NamespacePrefix)
 
 	source := rand.NewSource(time.Now().UnixNano())
 	rnd := rand.New(source)
 	stopTime := time.Now().Add(time.Duration(config.RunDurationMinutes) * time.Minute)
 	podIndex := 1
+
 	for time.Now().Before(stopTime) {
+		totalRunningPods := 0
+		for _, ns := range namespaces {
+			totalRunningPods += getRunningPodCount(clientset, ns)
+		}
+
+		if totalRunningPods >= totalPods {
+			time.Sleep(5 * time.Second)
+			log.Printf("Total running pods reached the target: %d", totalPods)
+			continue
+		}
+
 		randomNamespace := namespaces[rnd.Intn(len(namespaces))]
 		podName := fmt.Sprintf("logger-pod-%d", podIndex)
-		jobQueue <- Job{
-			Namespace: randomNamespace,
-			PodName:   podName,
-		}
+		createPod(clientset, randomNamespace, podName, totalLogLines, config.BytesPerLogLine)
+		log.Printf("Pod %s in namespace %s created", podName, randomNamespace)
 		podIndex++
 	}
-	close(jobQueue)
-
-	wg.Wait()
-}
-
-type Job struct {
-	Namespace string
-	PodName   string
 }

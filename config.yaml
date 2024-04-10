@@ -1,6 +1,5 @@
-num_k8s_namespaces: 10
+num_k8s_namespaces: 2
 bytes_per_log_line: 40
-kilobytes_per_pod_log: 500
-megabytes_total_log_size: 10
-num_workers: 10
-run_duration_minutes: 1
+kilobytes_per_pod_log: 100
+megabytes_total_log_size: 1
+run_duration_minutes: 5
