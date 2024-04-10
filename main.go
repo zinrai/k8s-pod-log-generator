@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"gopkg.in/yaml.v2"
@@ -42,6 +43,7 @@ func calculateTotalPods(megabytesTotalLogSize, kilobytesPerPodLog int) int {
 func createPod(clientset *kubernetes.Clientset, namespace, podName string, totalLogLines, bytesPerLine int) {
 	annotations := map[string]string{
 		"app": "k8s-pod-log-generator",
+		"total_log_lines": strconv.Itoa(totalLogLines),
 	}
 
 	_, err := clientset.CoreV1().Pods(namespace).Create(context.TODO(), &v1.Pod{
