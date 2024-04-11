@@ -79,7 +79,7 @@ func createNamespaces(clientset *kubernetes.Clientset, numK8sNamespaces int, nam
 	namespaces := make([]string, numK8sNamespaces)
 
 	for i := 1; i <= numK8sNamespaces; i++ {
-		namespaceName := fmt.Sprintf("%s%d", namespacePrefix, i)
+		namespaceName := fmt.Sprintf("%s-%d", namespacePrefix, i)
 
 		_, err := clientset.CoreV1().Namespaces().Get(context.TODO(), namespaceName, metav1.GetOptions{})
 		if err == nil {
