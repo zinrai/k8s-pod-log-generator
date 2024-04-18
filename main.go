@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v2"
@@ -27,6 +28,7 @@ type Config struct {
 	MegabytesTotalLogSize int    `yaml:"megabytes_total_log_size"`
 	RunDurationMinutes    int    `yaml:"run_duration_minutes"`
 	NamespacePrefix       string `yaml:"namespace_prefix"`
+	ConcurrentRequests    int    `yaml:"concurrent_requests"`
 }
 
 func calculateTotalLogLines(bytesPerLine int, kilobytesPerLog int) int {
@@ -42,7 +44,7 @@ func calculateTotalPods(megabytesTotalLogSize, kilobytesPerPodLog int) int {
 
 func createPod(clientset *kubernetes.Clientset, namespace, podName string, totalLogLines, bytesPerLine int) {
 	annotations := map[string]string{
-		"app": "k8s-pod-log-generator",
+		"app":             "k8s-pod-log-generator",
 		"total_log_lines": strconv.Itoa(totalLogLines),
 	}
 
@@ -176,22 +178,42 @@ func main() {
 	stopTime := time.Now().Add(time.Duration(config.RunDurationMinutes) * time.Minute)
 	podIndex := 1
 
+	var wg sync.WaitGroup
+	jobQueue := make(chan int, config.ConcurrentRequests)
+
 	for time.Now().Before(stopTime) {
 		totalRunningPods := 0
 		for _, ns := range namespaces {
 			totalRunningPods += getRunningPodCount(clientset, ns)
 		}
 
-		if totalRunningPods >= totalPods {
+		if totalRunningPods+config.ConcurrentRequests >= totalPods {
 			time.Sleep(5 * time.Second)
 			log.Printf("Total running pods reached the target: %d", totalPods)
 			continue
 		}
 
-		randomNamespace := namespaces[rnd.Intn(len(namespaces))]
-		podName := fmt.Sprintf("logger-pod-%d", podIndex)
-		createPod(clientset, randomNamespace, podName, totalLogLines, config.BytesPerLogLine)
-		log.Printf("Pod %s in namespace %s created", podName, randomNamespace)
-		podIndex++
+		for i := 0; i < config.ConcurrentRequests; i++ {
+			jobQueue <- podIndex
+			podIndex++
+		}
+
+		for i := 0; i < config.ConcurrentRequests; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+
+				sleepTime := rnd.Intn(3) + 1
+				time.Sleep(time.Duration(sleepTime) * time.Second)
+
+				podNumber := <-jobQueue
+				randomNamespace := namespaces[rnd.Intn(len(namespaces))]
+				podName := fmt.Sprintf("logger-pod-%d", podNumber)
+				createPod(clientset, randomNamespace, podName, totalLogLines, config.BytesPerLogLine)
+				log.Printf("Pod %s in namespace %s created", podName, randomNamespace)
+			}()
+		}
+
+		wg.Wait()
 	}
 }
